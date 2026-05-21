@@ -4,7 +4,6 @@ extension Notification.Name {
     static let codexSwitcherPanelWillClose = Notification.Name("codexSwitcherPanelWillClose")
 }
 
-
 struct AccountPanelView: View {
     @ObservedObject var store: AccountStore
     @State private var showSettings = false
@@ -220,7 +219,8 @@ private struct CompactAccountCard: View {
 
                     VStack(alignment: .leading, spacing: 5) {
                         CompactUsageBar(label: "时", window: account.usage?.rateLimit?.primaryWindow)
-                        CompactUsageBar(label: "周", window: account.usage?.rateLimit?.secondaryWindow)
+                        CompactUsageBar(
+                            label: "周", window: account.usage?.rateLimit?.secondaryWindow)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -234,7 +234,8 @@ private struct CompactAccountCard: View {
                             .frame(width: 24, height: 24)
                     } else {
                         IconButton(
-                            systemName: refreshError == nil ? "arrow.clockwise" : "exclamationmark.arrow.triangle.2.circlepath",
+                            systemName: refreshError == nil
+                                ? "arrow.clockwise" : "exclamationmark.arrow.triangle.2.circlepath",
                             help: refreshError.map { "刷新失败：\($0)" } ?? "刷新",
                             tint: refreshError == nil ? nil : .red
                         ) {
@@ -254,10 +255,15 @@ private struct CompactAccountCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(isCurrent ? Color.accentColor.opacity(0.12) : Color(nsColor: .textBackgroundColor))
+        .background(
+            isCurrent ? Color.accentColor.opacity(0.12) : Color(nsColor: .textBackgroundColor)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isCurrent ? Color.accentColor.opacity(0.55) : Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+                .stroke(
+                    isCurrent
+                        ? Color.accentColor.opacity(0.55)
+                        : Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
@@ -341,12 +347,17 @@ private struct SettingsView: View {
                 HStack(alignment: .center, spacing: 1) {
                     Toggle("自动切换账号", isOn: $settings.autoSwitchAccounts)
                         .fixedSize()
-                    HelpIcon(text: "开启后，应用会每分钟刷新当前账号用量；当小时或周剩余额度低于阈值时，自动切换到更合适的账号并提醒重启 Codex。候选账号优先选择周额度更早刷新的账号。")
+                    HelpIcon(
+                        text:
+                            "开启后，应用会每分钟刷新当前账号用量；当小时或周剩余额度低于阈值时，自动切换到更合适的账号并提醒重启 Codex。候选账号需同时高于小时和周阈值，并优先选择周额度更早刷新的账号。"
+                    )
                 }
                 if settings.autoSwitchAccounts {
                     VStack(alignment: .leading, spacing: 6) {
-                        thresholdField("时低于", text: $settings.autoSwitchHourlyThreshold, placeholder: "5")
-                        thresholdField("周低于", text: $settings.autoSwitchWeeklyThreshold, placeholder: "0")
+                        thresholdField(
+                            "时低于", text: $settings.autoSwitchHourlyThreshold, placeholder: "5")
+                        thresholdField(
+                            "周低于", text: $settings.autoSwitchWeeklyThreshold, placeholder: "0")
                     }
                     .font(.caption)
                 }
@@ -400,7 +411,7 @@ private struct SettingsView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("版本 0.1.0")
+                    Text("版本 0.1.1")
                     Text("作者：@Wekisen")
                 }
                 .font(.caption)
@@ -413,7 +424,9 @@ private struct SettingsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    private func thresholdField(_ title: String, text: Binding<String>, placeholder: String) -> some View {
+    private func thresholdField(_ title: String, text: Binding<String>, placeholder: String)
+        -> some View
+    {
         HStack(spacing: 6) {
             Text(title)
                 .foregroundStyle(.secondary)
@@ -426,7 +439,9 @@ private struct SettingsView: View {
         }
     }
 
-    private func proxyField<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    private func proxyField<Content: View>(_ title: String, @ViewBuilder content: () -> Content)
+        -> some View
+    {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
                 .font(.caption)
@@ -502,7 +517,10 @@ private struct IconButton: View {
     var tint: Color?
     var action: () -> Void
 
-    init(systemName: String, help: String, role: ButtonRole? = nil, tint: Color? = nil, action: @escaping () -> Void) {
+    init(
+        systemName: String, help: String, role: ButtonRole? = nil, tint: Color? = nil,
+        action: @escaping () -> Void
+    ) {
         self.systemName = systemName
         self.help = help
         self.role = role
@@ -659,8 +677,8 @@ private struct DetailUsage: View {
     }
 }
 
-private extension Date {
-    var compactMonthDayTime: String {
+extension Date {
+    fileprivate var compactMonthDayTime: String {
         formatted(
             .dateTime
                 .month(.twoDigits)

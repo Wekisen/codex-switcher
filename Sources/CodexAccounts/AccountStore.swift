@@ -251,7 +251,14 @@ final class AccountStore: ObservableObject {
         guard hourlyTriggered || weeklyTriggered else { return nil }
 
         let candidates = accounts
-            .filter { $0.id != currentID && $0.hourlyRemainingPercent != nil && $0.weeklyRemainingPercent != nil }
+            .filter {
+                isUsableAutoSwitchCandidate(
+                    $0,
+                    currentID: currentID,
+                    hourlyThresholdPercent: hourlyThresholdPercent,
+                    weeklyThresholdPercent: weeklyThresholdPercent
+                )
+            }
             .sorted(by: isBetterAutoSwitchCandidate)
 
         guard let target = candidates.first,
@@ -346,6 +353,22 @@ final class AccountStore: ObservableObject {
     private func shouldAutoSwitch(remaining: Double?, threshold: Double) -> Bool {
         guard let remaining else { return false }
         return remaining <= threshold
+    }
+
+    private func isUsableAutoSwitchCandidate(
+        _ account: AccountRecord,
+        currentID: String,
+        hourlyThresholdPercent: Double,
+        weeklyThresholdPercent: Double
+    ) -> Bool {
+        guard account.id != currentID,
+              let hourlyRemaining = account.hourlyRemainingPercent,
+              let weeklyRemaining = account.weeklyRemainingPercent else {
+            return false
+        }
+
+        return hourlyRemaining > hourlyThresholdPercent
+            && weeklyRemaining > weeklyThresholdPercent
     }
 
     private func isBetterSwitchTarget(_ target: AccountRecord, than current: AccountRecord) -> Bool {
