@@ -1,0 +1,27 @@
+.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Build artifacts
+dist/
+*.app
+*.dSYM
+
+# Generated icons
+Assets/*.icns
+Assets/*.iconset/
+
+# Local environment
+.env
+*.local
+
