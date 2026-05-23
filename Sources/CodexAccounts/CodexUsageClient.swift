@@ -22,6 +22,7 @@ final class CodexUsageClient: @unchecked Sendable {
         }
 
         var errors: [String] = []
+        var hasUnauthorizedError = false
         for url in usageURLs {
             do {
                 var request = URLRequest(url: url)
@@ -35,16 +36,20 @@ final class CodexUsageClient: @unchecked Sendable {
                 let usage = try decoder.decode(UsageResponse.self, from: data)
                 return UsageResult(auth: auth, usage: usage)
             } catch {
+                hasUnauthorizedError = hasUnauthorizedError || error.requiresVerification
                 errors.append("\(url.absoluteString): \(error.localizedDescription)")
             }
         }
 
+        if hasUnauthorizedError {
+            throw AppError.unauthorized(errors.joined(separator: "\n"))
+        }
         throw AppError.network(errors.joined(separator: "\n"))
     }
 
     private func refresh(auth originalAuth: AuthFile) async throws -> AuthFile {
         guard let refreshToken = originalAuth.tokens?.refreshToken else {
-            throw AppError.invalidAuth("缺少 refresh_token。")
+            throw AppError.invalidAuth(L10n.missingRefreshToken())
         }
 
         var request = URLRequest(url: tokenURL)
@@ -76,7 +81,7 @@ final class CodexUsageClient: @unchecked Sendable {
         let session = URLSession(configuration: URLSessionConfiguration.codexConfiguration)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
-            throw AppError.network("没有收到 HTTP 响应。")
+            throw AppError.network(L10n.httpNoResponse())
         }
         guard (200..<300).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""

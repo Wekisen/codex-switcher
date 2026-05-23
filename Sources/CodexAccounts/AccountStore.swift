@@ -7,7 +7,7 @@ final class AccountStore: ObservableObject {
     @Published private(set) var currentAccountID: String?
     @Published var isRefreshing = false
     @Published private(set) var refreshingAccountIDs: Set<String> = []
-    @Published private(set) var refreshFailures: [String: String] = [:]
+    @Published private(set) var refreshFailures: [String: AccountRefreshFailure] = [:]
     @Published private(set) var isAddingAccount = false
     @Published var message: String?
 
@@ -64,7 +64,7 @@ final class AccountStore: ObservableObject {
             accounts = try loadAccounts()
             currentAccountID = try readCurrentAccountID()
             isAddingAccount = FileManager.default.fileExists(atPath: pendingStateURL.path)
-            message = accounts.isEmpty ? "请先添加 Codex 账号。" : nil
+            message = accounts.isEmpty ? L10n.emptyAccountsHelp : nil
         } catch {
             message = error.localizedDescription
         }
@@ -76,7 +76,7 @@ final class AccountStore: ObservableObject {
             try #"{"status":"adding"}"#.write(to: pendingStateURL, atomically: true, encoding: .utf8)
 
             isAddingAccount = true
-            message = "已打开浏览器授权页，等待登录回调。"
+            message = L10n.openedBrowserForAdd()
 
             let auth = try await oauth.start()
             let record = try makeAccountRecord(from: auth, existing: accounts.first { $0.id == auth.tokens?.accountID })
@@ -85,7 +85,7 @@ final class AccountStore: ObservableObject {
             accounts = try loadAccounts()
             currentAccountID = try readCurrentAccountID()
             isAddingAccount = false
-            message = "已添加 \(record.email)。"
+            message = L10n.accountAdded(record.email)
             await refresh(accountID: record.id)
         } catch {
             isAddingAccount = false
@@ -102,7 +102,7 @@ final class AccountStore: ObservableObject {
             accounts = try loadAccounts()
             currentAccountID = try readCurrentAccountID()
             isAddingAccount = false
-            message = "已取消添加账号。"
+            message = L10n.cancelledAddAccount()
         } catch {
             message = error.localizedDescription
         }
@@ -125,7 +125,7 @@ final class AccountStore: ObservableObject {
             let currentID = try readCurrentAccountID()
             if currentID == id {
                 currentAccountID = id
-                message = "当前已是 \(account.email)。"
+                message = L10n.alreadyCurrentAccount(account.email)
                 return
             }
             if FileManager.default.fileExists(atPath: codexAuthURL.path) {
@@ -134,7 +134,7 @@ final class AccountStore: ObservableObject {
             }
             try writeAuth(account.auth, to: codexAuthURL)
             currentAccountID = id
-            message = "已切换到 \(account.email)。"
+            message = L10n.switchToAccount(account.email)
         } catch {
             message = error.localizedDescription
         }
@@ -162,7 +162,11 @@ final class AccountStore: ObservableObject {
                         let usage = try await client.fetchUsage(auth: account.auth)
                         return RefreshAllResult(accountID: account.id, outcome: .success(usage))
                     } catch {
-                        return RefreshAllResult(accountID: account.id, outcome: .failure(error.localizedDescription))
+                        let message = error.requiresVerification ? L10n.verifyHelp : error.localizedDescription
+                        return RefreshAllResult(
+                            accountID: account.id,
+                            outcome: .failure(message: message, requiresVerification: error.requiresVerification)
+                        )
                     }
                 }
             }
@@ -184,19 +188,27 @@ final class AccountStore: ObservableObject {
                         refreshFailures[result.accountID] = nil
                     } catch {
                         let message = error.localizedDescription
-                        refreshFailures[result.accountID] = message
+                        refreshFailures[result.accountID] = AccountRefreshFailure(
+                            message: message,
+                            requiresVerification: error.requiresVerification
+                        )
                         failedMessages.append("\(account.email)：\(message)")
                     }
-                case .failure(let message):
+                case .failure(let message, let requiresVerification):
                     let email = accounts[index].email
-                    refreshFailures[result.accountID] = message
+                    refreshFailures[result.accountID] = AccountRefreshFailure(
+                        message: message,
+                        requiresVerification: requiresVerification
+                    )
                     failedMessages.append("\(email)：\(message)")
                 }
             }
             return failedMessages
         }
 
-        message = failedMessages.isEmpty ? "已刷新全部账号。" : "部分账号刷新失败：\(failedMessages.joined(separator: "；"))"
+        message = failedMessages.isEmpty
+            ? L10n.refreshAllSucceeded()
+            : L10n.partialRefreshFailed(failedMessages.joined(separator: "；"))
     }
 
     @discardableResult
@@ -223,14 +235,67 @@ final class AccountStore: ObservableObject {
             try save(account)
             accounts[index] = account
             refreshFailures[accountID] = nil
-            message = "已刷新 \(account.email)。"
+            message = L10n.accountRefreshed(account.email)
             return true
         } catch {
-            let errorMessage = error.localizedDescription
-            refreshFailures[accountID] = errorMessage
+            let errorMessage = error.requiresVerification ? L10n.verifyHelp : error.localizedDescription
+            refreshFailures[accountID] = AccountRefreshFailure(
+                message: errorMessage,
+                requiresVerification: error.requiresVerification
+            )
             message = errorMessage
             return false
         }
+    }
+
+    @discardableResult
+    func verifyAccount(accountID: String) async -> Bool {
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }),
+              !isAddingAccount else {
+            return false
+        }
+
+        let existing = accounts[index]
+        isRefreshing = true
+        refreshingAccountIDs.insert(accountID)
+        message = L10n.openedBrowserForVerification(existing.email)
+        defer {
+            refreshingAccountIDs.remove(accountID)
+            isRefreshing = false
+        }
+
+        do {
+            let auth = try await oauth.start()
+            guard auth.tokens?.accountID == accountID else {
+                throw AppError.invalidAuth(
+                    L10n.verifyWrongAccount(
+                        expected: existing.email,
+                        actual: JWT.decode(auth.tokens?.idToken)?.email ?? auth.tokens?.accountID ?? "-"
+                    )
+                )
+            }
+
+            let record = try makeAccountRecord(from: auth, existing: existing)
+            try save(record)
+            if let updatedIndex = accounts.firstIndex(where: { $0.id == accountID }) {
+                accounts[updatedIndex] = record
+            }
+            if currentAccountID == accountID {
+                try writeAuth(record.auth, to: codexAuthURL)
+            }
+            refreshFailures[accountID] = nil
+            message = L10n.accountVerified(record.email)
+        } catch {
+            let errorMessage = error.localizedDescription
+            refreshFailures[accountID] = AccountRefreshFailure(
+                message: errorMessage,
+                requiresVerification: true
+            )
+            message = errorMessage
+            return false
+        }
+
+        return await refresh(accountID: accountID, showProgress: false)
     }
 
     func autoSwitchIfNeeded(hourlyThresholdPercent: Double, weeklyThresholdPercent: Double) async -> AccountRecord? {
@@ -263,12 +328,12 @@ final class AccountStore: ObservableObject {
 
         guard let target = candidates.first,
               isBetterSwitchTarget(target, than: current) else {
-            message = "当前账号额度较低，但没有可切换的更合适账号。"
+            message = L10n.autoSwitchNoTarget
             return nil
         }
 
         await switchToAccount(target.id)
-        message = "已自动切换到 \(target.email)，请重启 Codex 应用。"
+        message = L10n.autoSwitched(target.email)
         return accounts.first(where: { $0.id == target.id }) ?? target
     }
 
@@ -278,7 +343,7 @@ final class AccountStore: ObservableObject {
             try? FileManager.default.removeItem(at: url)
             accounts = try loadAccounts()
             currentAccountID = try readCurrentAccountID()
-            message = "已删除账号。"
+            message = L10n.accountDeleted()
         } catch {
             message = error.localizedDescription
         }
@@ -326,17 +391,17 @@ final class AccountStore: ObservableObject {
         }
         let auth = try JSONDecoder().decode(AuthFile.self, from: Data(contentsOf: url))
         guard auth.authMode == "chatgpt" else {
-            throw AppError.invalidAuth("当前 auth_mode 不是 chatgpt，无法作为 Codex ChatGPT 账号导入。")
+            throw AppError.invalidAuth(L10n.authModeUnsupported())
         }
         guard auth.tokens?.accountID != nil, auth.tokens?.accessToken != nil, auth.tokens?.refreshToken != nil else {
-            throw AppError.invalidAuth("auth.json 缺少必要 token 字段。")
+            throw AppError.invalidAuth(L10n.missingAuthFields())
         }
         return auth
     }
 
     private func makeAccountRecord(from auth: AuthFile, existing: AccountRecord?) throws -> AccountRecord {
         guard let accountID = auth.tokens?.accountID else {
-            throw AppError.invalidAuth("auth.json 缺少 account_id。")
+            throw AppError.invalidAuth(L10n.missingAccountID())
         }
         let payload = JWT.decode(auth.tokens?.idToken)
         return AccountRecord(
@@ -478,5 +543,5 @@ private struct RefreshAllResult: Sendable {
 
 private enum RefreshAllOutcome: Sendable {
     case success(UsageResult)
-    case failure(String)
+    case failure(message: String, requiresVerification: Bool)
 }

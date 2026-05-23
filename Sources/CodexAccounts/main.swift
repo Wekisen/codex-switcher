@@ -48,11 +48,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func showStatusMenu() {
         guard let button = statusItem?.button else { return }
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L10n.settings, action: #selector(openSettingsFromMenu), keyEquivalent: ","))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: L10n.quit, action: #selector(quitApp), keyEquivalent: "q"))
         menu.items.forEach { $0.target = self }
         statusItem?.menu = menu
         button.performClick(nil)
         statusItem?.menu = nil
+    }
+
+    @objc private func openSettingsFromMenu() {
+        showPopoverIfNeeded()
+        NotificationCenter.default.post(name: .codexSwitcherOpenSettings, object: nil)
     }
 
     @objc private func quitApp() {
@@ -60,19 +67,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func togglePopover(_ sender: AnyObject?) {
-        guard let button = statusItem?.button else { return }
-
         if popover.isShown {
             NotificationCenter.default.post(name: .codexSwitcherPanelWillClose, object: nil)
             popover.performClose(sender)
         } else {
+            showPopoverIfNeeded()
+        }
+    }
+
+    private func showPopoverIfNeeded() {
+        guard let button = statusItem?.button else { return }
+
+        if !popover.isShown {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
-            if AppSettings.shared.autoRefreshOnOpen {
-                Task { await store.refreshOnOpen() }
-            } else {
-                store.syncCurrentAccountFromDisk()
-            }
+        }
+        popover.contentViewController?.view.window?.makeKey()
+
+        if AppSettings.shared.autoRefreshOnOpen {
+            Task { await store.refreshOnOpen() }
+        } else {
+            store.syncCurrentAccountFromDisk()
         }
     }
 
@@ -113,8 +127,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private static func sendSwitchNotification(account: AccountRecord) {
         let content = UNMutableNotificationContent()
-        content.title = "Codex 账号已切换"
-        content.body = "已切换到 \(account.email)。请重启 Codex 应用。"
+        content.title = L10n.notificationTitle()
+        content.body = L10n.notificationBody(account.email)
         content.sound = .default
 
         let request = UNNotificationRequest(

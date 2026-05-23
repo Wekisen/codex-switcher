@@ -33,7 +33,7 @@ final class OAuthLoginService {
     func cancel() {
         listener?.cancel()
         listener = nil
-        continuation?.resume(throwing: AppError.invalidAuth("已取消添加账号。"))
+        continuation?.resume(throwing: AppError.invalidAuth(L10n.cancelledAddAccount()))
         continuation = nil
         expectedState = nil
         codeVerifier = nil
@@ -50,7 +50,7 @@ final class OAuthLoginService {
         listener.stateUpdateHandler = { [weak self] state in
             if case .failed(let error) = state {
                 Task { @MainActor in
-                    self?.finish(with: .failure(AppError.network("OAuth 本地回调服务失败：\(error.localizedDescription)")))
+                    self?.finish(with: .failure(AppError.network(L10n.oauthCallbackFailed(error.localizedDescription))))
                 }
             }
         }
@@ -71,12 +71,12 @@ final class OAuthLoginService {
         guard let firstLine = request.components(separatedBy: "\r\n").first,
               let target = firstLine.split(separator: " ").dropFirst().first,
               let url = URL(string: "http://localhost:\(port)\(target)") else {
-            respond(connection, status: "400 Bad Request", body: Self.errorHTML("Invalid callback request"))
+            respond(connection, status: "400 Bad Request", body: Self.errorHTML(L10n.oauthInvalidCallbackRequest()))
             return
         }
 
         guard url.path == "/auth/callback" else {
-            respond(connection, status: "404 Not Found", body: Self.errorHTML("Unknown callback path"))
+            respond(connection, status: "404 Not Found", body: Self.errorHTML(L10n.oauthUnknownCallbackPath()))
             return
         }
 
@@ -91,18 +91,17 @@ final class OAuthLoginService {
         }
 
         guard query["state"] == expectedState else {
-            respond(connection, status: "400 Bad Request", body: Self.errorHTML("Invalid state"))
-            finish(with: .failure(AppError.invalidAuth("OAuth state 校验失败。")))
+            respond(connection, status: "400 Bad Request", body: Self.errorHTML(L10n.oauthInvalidState()))
             return
         }
 
         guard let code = query["code"], let verifier = codeVerifier else {
-            respond(connection, status: "400 Bad Request", body: Self.errorHTML("Missing authorization code"))
-            finish(with: .failure(AppError.invalidAuth("OAuth 回调缺少授权码。")))
+            respond(connection, status: "400 Bad Request", body: Self.errorHTML(L10n.oauthMissingCode()))
+            finish(with: .failure(AppError.invalidAuth(L10n.oauthMissingCode())))
             return
         }
 
-        respond(connection, status: "200 OK", body: Self.successHTML)
+        respond(connection, status: "200 OK", body: Self.successHTML())
         Task {
             do {
                 let auth = try await exchangeCode(code, redirectURI: redirectURI, verifier: verifier)
@@ -162,7 +161,7 @@ final class OAuthLoginService {
         let session = URLSession(configuration: .codexConfiguration)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
-            throw AppError.network("OAuth token exchange 没有收到 HTTP 响应。")
+            throw AppError.network(L10n.oauthNoResponse())
         }
         guard (200..<300).contains(http.statusCode) else {
             throw AppError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
@@ -171,7 +170,7 @@ final class OAuthLoginService {
         let tokens = try JSONDecoder().decode(OAuthTokenResponse.self, from: data)
         let accountID = JWT.extractAccountID(from: tokens.idToken) ?? JWT.extractAccountID(from: tokens.accessToken)
         guard let accountID else {
-            throw AppError.invalidAuth("OAuth token 中没有找到 ChatGPT account id。")
+            throw AppError.invalidAuth(L10n.oauthMissingAccountID())
         }
 
         return AuthFile(
@@ -229,19 +228,21 @@ final class OAuthLoginService {
         return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
-    private static let successHTML = """
-    <!doctype html><html><head><meta charset="utf-8"><title>Codex Switcher</title></head>
-    <body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:40px">
-    <h2>Authorization Successful</h2><p>You can close this window and return to Codex Switcher.</p>
-    <script>setTimeout(() => window.close(), 1200)</script>
-    </body></html>
-    """
+    private static func successHTML() -> String {
+        """
+        <!doctype html><html><head><meta charset="utf-8"><title>Codex Switcher</title></head>
+        <body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:40px">
+        <h2>\(L10n.authorizationSucceeded)</h2><p>\(L10n.closeBrowserWindow)</p>
+        <script>setTimeout(() => window.close(), 1200)</script>
+        </body></html>
+        """
+    }
 
     private static func errorHTML(_ message: String) -> String {
         """
         <!doctype html><html><head><meta charset="utf-8"><title>Codex Switcher</title></head>
         <body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:40px">
-        <h2>Authorization Failed</h2><p>\(message)</p>
+        <h2>\(L10n.authorizationFailed)</h2><p>\(message)</p>
         </body></html>
         """
     }

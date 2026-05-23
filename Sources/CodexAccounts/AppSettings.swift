@@ -21,6 +21,12 @@ final class AppSettings: ObservableObject {
     @Published var autoSwitchWeeklyThreshold: String {
         didSet { UserDefaults.standard.set(autoSwitchWeeklyThreshold, forKey: Keys.autoSwitchWeeklyThreshold) }
     }
+    @Published var language: AppLanguage {
+        didSet {
+            UserDefaults.standard.set(language.rawValue, forKey: Keys.language)
+            scheduleProxyStatusUpdate()
+        }
+    }
     @Published var useCustomProxy: Bool {
         didSet {
             UserDefaults.standard.set(useCustomProxy, forKey: Keys.useCustomProxy)
@@ -62,6 +68,7 @@ final class AppSettings: ObservableObject {
         static let autoSwitchAccounts = "autoSwitchAccounts"
         static let autoSwitchHourlyThreshold = "autoSwitchHourlyThreshold"
         static let autoSwitchWeeklyThreshold = "autoSwitchWeeklyThreshold"
+        static let language = "language"
         static let useCustomProxy = "useCustomProxy"
         static let proxyHost = "proxyHost"
         static let proxyPort = "proxyPort"
@@ -85,6 +92,7 @@ final class AppSettings: ObservableObject {
             ?? UserDefaults.standard.string(forKey: "autoSwitchThreshold")
             ?? "5"
         autoSwitchWeeklyThreshold = UserDefaults.standard.string(forKey: Keys.autoSwitchWeeklyThreshold) ?? "0"
+        language = AppLanguage.savedOrSystemDefault()
         useCustomProxy = UserDefaults.standard.bool(forKey: Keys.useCustomProxy)
         proxyHost = UserDefaults.standard.string(forKey: Keys.proxyHost) ?? "127.0.0.1"
         proxyPort = UserDefaults.standard.string(forKey: Keys.proxyPort) ?? "7890"
@@ -98,23 +106,23 @@ final class AppSettings: ObservableObject {
         UserDefaults.standard.set(launchAtLogin, forKey: Keys.launchAtLogin)
 
         guard Bundle.main.bundleURL.pathExtension == "app" else {
-            lastSettingsMessage = "当前是开发运行模式。请先打包成 .app 后再开启开机自启动。"
+            lastSettingsMessage = L10n.devModeLaunchAtLoginUnavailable
             return
         }
 
         do {
             if launchAtLogin {
                 try SMAppService.mainApp.register()
-                lastSettingsMessage = "已开启开机自启动。"
+                lastSettingsMessage = L10n.launchAtLoginEnabled
             } else {
                 if SMAppService.mainApp.status == .enabled {
                     try SMAppService.mainApp.unregister()
                 }
-                lastSettingsMessage = "已关闭开机自启动。"
+                lastSettingsMessage = L10n.launchAtLoginDisabled
             }
             syncLaunchAtLoginState()
         } catch {
-            lastSettingsMessage = "开机自启动设置失败：\(error.localizedDescription)"
+            lastSettingsMessage = L10n.launchAtLoginFailed(error.localizedDescription)
             syncLaunchAtLoginState()
         }
     }
@@ -145,7 +153,7 @@ final class AppSettings: ObservableObject {
 
         guard useCustomProxy else {
             proxyStatus = .disabled
-            proxyStatusMessage = "未启用自定义代理。"
+            proxyStatusMessage = L10n.proxyDisabled
             return
         }
 
@@ -153,19 +161,19 @@ final class AppSettings: ObservableObject {
         let portText = proxyPort.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !host.isEmpty, let port = UInt16(portText), port > 0 else {
             proxyStatus = .failed
-            proxyStatusMessage = "代理配置不完整。"
+            proxyStatusMessage = L10n.proxyIncomplete
             return
         }
 
         proxyStatus = .checking
-        proxyStatusMessage = "正在检测代理..."
+        proxyStatusMessage = L10n.proxyChecking
         proxyStatusTask = Task { [host, port] in
             try? await Task.sleep(nanoseconds: 400_000_000)
             guard !Task.isCancelled else { return }
             let reachable = await Self.checkTCPConnection(host: host, port: port)
             guard !Task.isCancelled else { return }
             proxyStatus = reachable ? .connected : .failed
-            proxyStatusMessage = reachable ? "代理可连接。" : "代理不可连接，请检查地址和端口。"
+            proxyStatusMessage = reachable ? L10n.proxyConnected : L10n.proxyFailed
         }
     }
 
@@ -198,6 +206,35 @@ enum ProxyConnectionStatus {
     case checking
     case connected
     case failed
+}
+
+enum AppLanguage: String, CaseIterable, Identifiable {
+    case english = "en"
+    case simplifiedChinese = "zh-Hans"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .english:
+            return "English"
+        case .simplifiedChinese:
+            return "简体中文"
+        }
+    }
+
+    static func savedOrSystemDefault() -> AppLanguage {
+        if let raw = UserDefaults.standard.string(forKey: "language"),
+           let language = AppLanguage(rawValue: raw) {
+            return language
+        }
+
+        let preferred = Locale.preferredLanguages.first?.lowercased() ?? ""
+        if preferred.hasPrefix("zh-hans") || preferred.hasPrefix("zh-cn") || preferred == "zh" {
+            return .simplifiedChinese
+        }
+        return .english
+    }
 }
 
 private final class TCPProbe: @unchecked Sendable {

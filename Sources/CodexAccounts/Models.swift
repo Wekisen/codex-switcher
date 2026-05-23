@@ -38,6 +38,11 @@ struct AccountRecord: Codable, Identifiable, Sendable {
     var usage: UsageResponse?
 }
 
+struct AccountRefreshFailure: Equatable {
+    var message: String
+    var requiresVerification: Bool
+}
+
 struct UsageResponse: Codable, Equatable, Sendable {
     var email: String?
     var planType: String?
@@ -168,19 +173,37 @@ enum AppError: LocalizedError {
     case missingAuth
     case invalidAuth(String)
     case network(String)
+    case unauthorized(String)
     case http(Int, String)
 
     var errorDescription: String? {
         switch self {
         case .missingAuth:
-            return "没有找到 ~/.codex/auth.json，请先运行 codex login。"
+            return L10n.authMissing
         case .invalidAuth(let message):
             return message
         case .network(let message):
             return message
+        case .unauthorized:
+            return L10n.verifyHelp
         case .http(let code, let body):
             return "HTTP \(code): \(body)"
         }
+    }
+
+    var requiresVerification: Bool {
+        switch self {
+        case .unauthorized, .http(401, _):
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+extension Error {
+    var requiresVerification: Bool {
+        (self as? AppError)?.requiresVerification ?? false
     }
 }
 

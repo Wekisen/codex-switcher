@@ -2,10 +2,12 @@ import SwiftUI
 
 extension Notification.Name {
     static let codexSwitcherPanelWillClose = Notification.Name("codexSwitcherPanelWillClose")
+    static let codexSwitcherOpenSettings = Notification.Name("codexSwitcherOpenSettings")
 }
 
 struct AccountPanelView: View {
     @ObservedObject var store: AccountStore
+    @ObservedObject private var settings = AppSettings.shared
     @State private var showSettings = false
     @State private var detailAccount: AccountRecord?
 
@@ -59,6 +61,10 @@ struct AccountPanelView: View {
             detailAccount = nil
             showSettings = false
         }
+        .onReceive(NotificationCenter.default.publisher(for: .codexSwitcherOpenSettings)) { _ in
+            detailAccount = nil
+            showSettings = true
+        }
     }
 
     private var header: some View {
@@ -78,7 +84,7 @@ struct AccountPanelView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .disabled(store.accounts.isEmpty || store.isRefreshing)
-            .help("刷新全部")
+            .help(L10n.refreshAll)
         }
         .padding(14)
     }
@@ -90,9 +96,9 @@ struct AccountPanelView: View {
                     Image(systemName: "person.crop.circle.badge.plus")
                         .font(.system(size: 36))
                         .foregroundStyle(.secondary)
-                    Text("还没有账号")
+                    Text(L10n.emptyAccounts)
                         .font(.headline)
-                    Text("点击下方“添加账号”，按提示完成登录。")
+                    Text(L10n.emptyAccountsHelp)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -107,9 +113,10 @@ struct AccountPanelView: View {
                                 account: account,
                                 isCurrent: account.id == store.currentAccountID,
                                 isRefreshing: store.refreshingAccountIDs.contains(account.id),
-                                refreshError: store.refreshFailures[account.id],
+                                refreshFailure: store.refreshFailures[account.id],
                                 onSwitch: { Task { await store.switchToAccount(account.id) } },
                                 onRefresh: { Task { await store.refresh(accountID: account.id) } },
+                                onVerify: { Task { await store.verifyAccount(accountID: account.id) } },
                                 onDetails: { detailAccount = account },
                                 onDelete: { Task { await store.deleteAccount(account.id) } }
                             )
@@ -135,26 +142,26 @@ struct AccountPanelView: View {
                 if store.isAddingAccount {
                     ProgressView()
                         .scaleEffect(0.75)
-                    Text("等待浏览器授权")
+                    Text(L10n.waitingForBrowserAuth)
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
                     Button {
                         Task { await store.cancelAddAccount() }
                     } label: {
-                        Label("取消", systemImage: "xmark.circle")
+                        Label(L10n.cancel, systemImage: "xmark.circle")
                     }
                 } else {
                     Button {
                         Task { await store.beginAddAccount() }
                     } label: {
-                        Label("添加账号", systemImage: "person.crop.circle.badge.plus")
+                        Label(L10n.addAccount, systemImage: "person.crop.circle.badge.plus")
                     }
 
                     Button {
                         showSettings = true
                     } label: {
-                        Label("设置", systemImage: "gearshape")
+                        Label(L10n.settings, systemImage: "gearshape")
                     }
                 }
 
@@ -163,7 +170,7 @@ struct AccountPanelView: View {
                 Button {
                     NSApp.terminate(nil)
                 } label: {
-                    Label("退出", systemImage: "power")
+                    Label(L10n.quit, systemImage: "power")
                 }
             }
         }
@@ -171,11 +178,11 @@ struct AccountPanelView: View {
     }
 
     private var currentLabel: String {
-        guard let id = store.currentAccountID else { return "当前 Codex 账号：未检测到" }
+        guard let id = store.currentAccountID else { return L10n.currentAccountMissing }
         if let account = store.accounts.first(where: { $0.id == id }) {
-            return "当前 Codex 账号：\(account.email)"
+            return L10n.currentAccount(account.email)
         }
-        return "当前 Codex 账号：未导入"
+        return L10n.currentAccountImportedMissing
     }
 
     private func latestAccount(_ account: AccountRecord) -> AccountRecord {
@@ -193,9 +200,10 @@ private struct CompactAccountCard: View {
     var account: AccountRecord
     var isCurrent: Bool
     var isRefreshing: Bool
-    var refreshError: String?
+    var refreshFailure: AccountRefreshFailure?
     var onSwitch: () -> Void
     var onRefresh: () -> Void
+    var onVerify: () -> Void
     var onDetails: () -> Void
     var onDelete: () -> Void
 
@@ -218,9 +226,9 @@ private struct CompactAccountCard: View {
                     }
 
                     VStack(alignment: .leading, spacing: 5) {
-                        CompactUsageBar(label: "时", window: account.usage?.rateLimit?.primaryWindow)
+                        CompactUsageBar(label: L10n.hourShort, window: account.usage?.rateLimit?.primaryWindow)
                         CompactUsageBar(
-                            label: "周", window: account.usage?.rateLimit?.secondaryWindow)
+                            label: L10n.weekShort, window: account.usage?.rateLimit?.secondaryWindow)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -232,20 +240,31 @@ private struct CompactAccountCard: View {
                         ProgressView()
                             .controlSize(.small)
                             .frame(width: 24, height: 24)
+                    } else if let refreshFailure, refreshFailure.requiresVerification {
+                        Button(action: onVerify) {
+                            Text(L10n.verify)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(minWidth: 44, minHeight: 24)
+                                .background(Color.red)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                        .help(refreshFailure.message)
                     } else {
                         IconButton(
-                            systemName: refreshError == nil
+                            systemName: refreshFailure == nil
                                 ? "arrow.clockwise" : "exclamationmark.arrow.triangle.2.circlepath",
-                            help: refreshError.map { "刷新失败：\($0)" } ?? "刷新",
-                            tint: refreshError == nil ? nil : .red
+                            help: refreshFailure.map { L10n.refreshFailed($0.message) } ?? L10n.refresh,
+                            tint: refreshFailure == nil ? nil : .red
                         ) {
                             onRefresh()
                         }
                     }
-                    IconButton(systemName: "info.circle", help: "查看详情") {
+                    IconButton(systemName: "info.circle", help: L10n.details) {
                         onDetails()
                     }
-                    IconButton(systemName: "trash", help: "删除", role: .destructive) {
+                    IconButton(systemName: "trash", help: L10n.delete, role: .destructive) {
                         onDelete()
                     }
                 }
@@ -317,19 +336,20 @@ private struct CompactUsageBar: View {
     }
 
     private var resetText: String {
-        guard let resetAt = window?.resetAt else { return "未刷新" }
+        guard let resetAt = window?.resetAt else { return L10n.noRefresh }
         return Date(timeIntervalSince1970: resetAt).compactMonthDayTime
     }
 }
 
 private struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
+    @State private var selectedSection = SettingsSection.general
     var onClose: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("设置")
+                Text(L10n.settings)
                     .font(.headline)
                 Spacer()
                 Button {
@@ -341,23 +361,55 @@ private struct SettingsView: View {
                 .buttonStyle(.borderless)
             }
 
+            Picker(L10n.settings, selection: $selectedSection) {
+                ForEach(SettingsSection.allCases) { section in
+                    Text(section.title).tag(section)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .id(settings.language)
+
+            Group {
+                switch selectedSection {
+                case .general:
+                    generalSettings
+                case .network:
+                    networkSettings
+                case .about:
+                    aboutSettings
+                }
+            }
+            .frame(minHeight: 220, alignment: .top)
+        }
+        .padding(20)
+        .frame(width: 430)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var generalSettings: some View {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("开机自启动", isOn: $settings.launchAtLogin)
-                Toggle("唤起面板时自动刷新", isOn: $settings.autoRefreshOnOpen)
+                Toggle(L10n.launchAtLogin, isOn: $settings.launchAtLogin)
+                Toggle(L10n.autoRefreshOnOpen, isOn: $settings.autoRefreshOnOpen)
                 HStack(alignment: .center, spacing: 1) {
-                    Toggle("自动切换账号", isOn: $settings.autoSwitchAccounts)
+                    Toggle(L10n.autoSwitchAccounts, isOn: $settings.autoSwitchAccounts)
                         .fixedSize()
-                    HelpIcon(
-                        text:
-                            "开启后，应用会每分钟刷新当前账号用量；当小时或周剩余额度低于阈值时，自动切换到更合适的账号并提醒重启 Codex。候选账号需同时高于小时和周阈值，并优先选择周额度更早刷新的账号。"
-                    )
+                    HelpIcon(text: L10n.autoSwitchHelp)
                 }
                 if settings.autoSwitchAccounts {
                     VStack(alignment: .leading, spacing: 6) {
                         thresholdField(
-                            "时低于", text: $settings.autoSwitchHourlyThreshold, placeholder: "5")
+                            L10n.thresholdHourly(),
+                            text: $settings.autoSwitchHourlyThreshold,
+                            placeholder: "5"
+                        )
                         thresholdField(
-                            "周低于", text: $settings.autoSwitchWeeklyThreshold, placeholder: "0")
+                            L10n.thresholdWeekly(),
+                            text: $settings.autoSwitchWeeklyThreshold,
+                            placeholder: "0"
+                        )
                     }
                     .font(.caption)
                 }
@@ -365,63 +417,72 @@ private struct SettingsView: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle("使用自定义代理", isOn: $settings.useCustomProxy)
-                VStack(spacing: 10) {
-                    HStack(spacing: 12) {
-                        proxyField("地址") {
-                            TextField("127.0.0.1", text: $settings.proxyHost)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        proxyField("端口") {
-                            TextField("7890", text: $settings.proxyPort)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                    }
-
-                    HStack(spacing: 12) {
-                        proxyField("用户名") {
-                            TextField("可选", text: $settings.proxyUsername)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        proxyField("密码") {
-                            SecureField("可选", text: $settings.proxyPassword)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                    }
-                }
-                .disabled(!settings.useCustomProxy)
-                if let message = settings.proxyStatusMessage {
-                    ProxyStatusView(status: settings.proxyStatus, message: message)
-                }
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 16) {
-                Text("关于")
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L10n.language)
                     .font(.subheadline.weight(.semibold))
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Codex Switcher")
-                        .font(.title3.weight(.semibold))
-                    Text("一个用于管理和切换多个 Codex / ChatGPT 账号的 macOS 菜单栏工具。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                Picker(L10n.language, selection: $settings.language) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.displayName).tag(language)
+                    }
                 }
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("版本 0.1.1")
-                    Text("作者：@Wekisen")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .pickerStyle(.segmented)
             }
         }
-        .padding(20)
-        .frame(width: 430)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var networkSettings: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(L10n.useCustomProxy, isOn: $settings.useCustomProxy)
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    proxyField(L10n.host) {
+                        TextField("127.0.0.1", text: $settings.proxyHost)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    proxyField(L10n.port) {
+                        TextField("7890", text: $settings.proxyPort)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    proxyField(L10n.username) {
+                        TextField(L10n.optional, text: $settings.proxyUsername)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    proxyField(L10n.password) {
+                        SecureField(L10n.optional, text: $settings.proxyPassword)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+            }
+            .disabled(!settings.useCustomProxy)
+            if let message = settings.proxyStatusMessage {
+                ProxyStatusView(status: settings.proxyStatus, message: message)
+            }
+        }
+    }
+
+    private var aboutSettings: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(L10n.about)
+                .font(.subheadline.weight(.semibold))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Codex Switcher")
+                    .font(.title3.weight(.semibold))
+                Text(L10n.appDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(L10n.version)
+                Text(L10n.author)
+            }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func thresholdField(_ title: String, text: Binding<String>, placeholder: String)
@@ -434,7 +495,7 @@ private struct SettingsView: View {
             TextField(placeholder, text: text)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 58)
-            Text("% 时切换")
+            Text(L10n.switchThresholdSuffix())
                 .foregroundStyle(.secondary)
         }
     }
@@ -449,6 +510,25 @@ private struct SettingsView: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private enum SettingsSection: String, CaseIterable, Identifiable {
+    case general
+    case network
+    case about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general:
+            return L10n.general
+        case .network:
+            return L10n.network
+        case .about:
+            return L10n.about
+        }
     }
 }
 
@@ -574,7 +654,7 @@ private struct AccountDetailView: View {
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.borderless)
-                    .help("刷新")
+                    .help(L10n.refresh)
                 }
                 Button {
                     onClose()
@@ -583,27 +663,27 @@ private struct AccountDetailView: View {
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.borderless)
-                .help("关闭")
+                .help(L10n.close)
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                DetailUsage(title: "小时用量", window: account.usage?.rateLimit?.primaryWindow)
-                DetailUsage(title: "周用量", window: account.usage?.rateLimit?.secondaryWindow)
+                DetailUsage(title: L10n.hourlyUsage, window: account.usage?.rateLimit?.primaryWindow)
+                DetailUsage(title: L10n.weeklyUsage, window: account.usage?.rateLimit?.secondaryWindow)
             }
 
             Divider()
 
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
                 GridRow {
-                    Text("Plan").foregroundStyle(.secondary)
+                    Text(L10n.plan).foregroundStyle(.secondary)
                     Text(account.usage?.planType ?? "-")
                 }
                 GridRow {
-                    Text("Account ID").foregroundStyle(.secondary)
+                    Text(L10n.accountID).foregroundStyle(.secondary)
                     Text(account.id).textSelection(.enabled)
                 }
                 GridRow {
-                    Text("Last Refresh").foregroundStyle(.secondary)
+                    Text(L10n.lastRefresh).foregroundStyle(.secondary)
                     Text(account.lastUsageRefresh?.compactMonthDayTime ?? "-")
                 }
             }
@@ -621,7 +701,7 @@ private struct AccountDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                 }
                 .buttonStyle(.plain)
-                .help("删除")
+                .help(L10n.delete)
             }
         }
         .padding(18)
@@ -655,7 +735,7 @@ private struct DetailUsage: View {
 
     private var valueText: String {
         guard let value = window?.usedPercent else { return "-" }
-        return "\(Int(max(0, 100 - value).rounded()))% remaining"
+        return L10n.remainingPercent(Int(max(0, 100 - value).rounded()))
     }
 
     private var remainingRatio: Double {
@@ -664,8 +744,8 @@ private struct DetailUsage: View {
     }
 
     private var resetText: String {
-        guard let resetAt = window?.resetAt else { return "reset -" }
-        return "Reset \(Date(timeIntervalSince1970: resetAt).compactMonthDayTime)"
+        guard let resetAt = window?.resetAt else { return L10n.noRefresh }
+        return L10n.resetAt(Date(timeIntervalSince1970: resetAt).compactMonthDayTime)
     }
 
     private var progressColor: Color {

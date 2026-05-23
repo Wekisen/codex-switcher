@@ -1,117 +1,125 @@
 # Codex Switcher
 
-Codex Switcher 是一个 macOS 菜单栏应用，用于在同一台 Mac 上管理多个 Codex / ChatGPT 账号。它可以通过 OpenAI OAuth 登录添加账号，展示小时和周额度的剩余用量，刷新用量，并通过更新标准 Codex CLI 授权文件来切换当前账号。
+<p align="center">
+  <strong>English</strong> | <a href="README.zh-CN.md"><strong>中文</strong></a>
+</p>
 
-![Codex Switcher 面板截图](docs/images/codex-switcher-panel.png)
+Codex Switcher is a macOS menu bar app for managing multiple Codex / ChatGPT accounts on one Mac. It adds accounts through OpenAI OAuth, shows remaining hourly and weekly usage, refreshes usage, verifies expired accounts, and switches the active account by updating the standard Codex CLI auth file.
 
-## 功能
+![Codex Switcher panel screenshot](docs/images/codex-switcher-panel.png)
 
-- macOS 菜单栏应用
-- 通过 OpenAI OAuth PKCE 流程添加账号
-- 点击账号即可切换当前 Codex 账号
-- 展示小时额度和周额度的剩余用量
-- 支持刷新单个账号或全部账号
-- 可选择在唤起面板时自动刷新
-- 支持按小时和周剩余额度阈值自动切换账号
-- 账号授权文件保存在本机 Application Support 目录
-- 切换账号前自动备份当前 Codex 授权文件
+## Features
 
-## 系统要求
+- macOS menu bar app
+- Add accounts through the OpenAI OAuth PKCE flow
+- Click an account to switch the active Codex account
+- Show remaining hourly and weekly usage
+- Refresh one account or all accounts
+- Verify an account again when refresh returns HTTP 401, updating its tokens
+- Optional auto-refresh when opening the panel
+- Optional auto-switching by hourly and weekly remaining quota thresholds
+- Language setting for English and Simplified Chinese, defaulting to the system language when supported
+- Account auth files are stored locally in Application Support
+- The current Codex auth file is backed up before switching accounts
 
-- macOS 13 或更高版本
-- Swift 6 工具链
-- Xcode 或 Apple Command Line Tools
-- 可以访问 OpenAI 登录和 ChatGPT 用量接口
+## Requirements
 
-当前 Swift Package 的最低系统版本是 macOS 13：
+- macOS 13 or later
+- Swift 6 toolchain
+- Xcode or Apple Command Line Tools
+- Network access to OpenAI login and ChatGPT usage endpoints
+
+The Swift package currently targets macOS 13:
 
 ```swift
 .macOS(.v13)
 ```
 
-## 构建和运行
+## Build and Run
 
-从源码运行：
+Run from source:
 
 ```bash
 swift run --disable-sandbox CodexSwitcher
 ```
 
-只执行构建：
+Build only:
 
 ```bash
 swift build --disable-sandbox
 ```
 
-## 打包本地 App
+## Package a Local App
 
-生成本地 `.app`：
+Generate a local `.app`:
 
 ```bash
 ./scripts/build-app.sh
 ```
 
-生成位置：
+Output path:
 
 ```text
 dist/Codex Switcher.app
 ```
 
-打包脚本会从源码生成应用图标：
+The packaging script generates the app icon from source:
 
 ```bash
 swift scripts/generate-icon.swift
 ```
 
-脚本会对本地 App 做 ad-hoc 签名，便于 macOS 识别应用身份。使用开机自启动时，建议将 App 放在固定位置运行，例如：
+The script also applies an ad-hoc signature so macOS can recognize the app identity. If you use launch at login, keep the app in a stable location, for example:
 
 ```text
 /Applications/Codex Switcher.app
 ```
 
-如果每次从不同路径运行，或删除后重新生成再开启自启动，macOS 可能会在登录项中留下旧记录。正式分发时建议使用稳定的 Developer ID 签名和公证流程。
+Running the app from different paths, or deleting and regenerating it after enabling launch at login, can leave stale macOS login item entries. For public distribution, use a stable Developer ID signature and notarization flow.
 
-构建产物、打包后的 app、生成的图标文件都已被 Git 忽略，不应该提交到仓库。
+Build artifacts, packaged apps, and generated icon files are ignored by Git and should not be committed.
 
-## 数据存储
+## Data Storage
 
-账号保存在本机：
+Accounts are stored locally at:
 
 ```text
 ~/Library/Application Support/Codex Switcher/accounts/
 ```
 
-切换账号时的备份保存在：
+Auth backups created before account switching are stored at:
 
 ```text
 ~/Library/Application Support/Codex Switcher/backups/
 ```
 
-当前生效的 Codex 账号仍然使用标准 Codex CLI 授权文件：
+The active Codex account still uses the standard Codex CLI auth file:
 
 ```text
 ~/.codex/auth.json
 ```
 
-## OAuth 登录
+## OAuth Login and Verification
 
-应用内置 OAuth PKCE 登录流程：
+The app includes an OAuth PKCE login flow:
 
-- 生成 PKCE verifier 和 challenge
-- 启动一个临时本地回调监听服务
-- 打开 OpenAI 授权页面
-- 通过 `http://localhost:1455/auth/callback` 接收授权回调
-- 用授权码换取 token
-- 将账号保存到本地账号库
+- Generate a PKCE verifier and challenge
+- Start a temporary local callback listener
+- Open the OpenAI authorization page
+- Receive the authorization callback at `http://localhost:1455/auth/callback`
+- Exchange the authorization code for tokens
+- Save the account to the local account library
 
-`1455` 端口的服务由 Codex Switcher 自己启动，具体实现在 `OAuthLoginService` 中。它只在添加账号流程中临时监听本机 `localhost` 回调，收到回调或取消后会关闭。
+If usage refresh fails with HTTP 401, the account card shows a red **Verify** button. Clicking it runs the OAuth flow for that account again and replaces the stored tokens after the returned ChatGPT account id matches the card.
 
-这个流程不依赖 VS Code，也不需要安装或运行 VS Code 插件。
+The `1455` port listener is started by Codex Switcher itself in `OAuthLoginService`. It only listens on `localhost` during add-account and verify-account flows, and closes after callback or cancellation.
 
-## 安全说明
+This flow does not depend on VS Code and does not require installing or running a VS Code extension.
 
-这个应用会在本机保存 OAuth token，以便切换 Codex 账号。请将你的 macOS 用户账号和 Application Support 目录视为敏感环境。后续正式版本建议将 token 存储迁移到 macOS Keychain。
+## Security
 
-## 许可证
+This app stores OAuth tokens locally so it can switch Codex accounts. Treat your macOS user account and Application Support directory as sensitive. A future production release should move token storage to macOS Keychain.
 
-暂未选择许可证。
+## License
+
+No license has been selected yet.
